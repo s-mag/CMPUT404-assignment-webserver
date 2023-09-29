@@ -1,115 +1,121 @@
 import os
-import socket
+import socketserver
 
-ROOT_DIRECTORY = 'www'
+# Copyright 2013 Abram Hindle, Eddie Antonio Santos
+# Copyright 2023 Sashreek Magan
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Furthermore it is derived from the Python documentation examples thus
+# some of the code is Copyright © 2001-2013 Python Software
+# Foundation; All Rights Reserved
+# http://docs.python.org/2/library/socketserver.html
+# run: python freetests.py
+# try: curl -v -X GET http://127.0.0.1:8080/
+# Sources: 
+# https://opensource.stackexchange.com/questions/9199/how-to-label-and-license-derivative-works-made-under-apache-license-version-2-0
 
-# Mapping file extensions to their MIME types
-MIME_TYPES = {
-    '.html': 'text/html',
-    '.css': 'text/css'
-}
+class MyWebServer(socketserver.BaseRequestHandler):
+    """A simple web server that serves static files."""
 
-# Mapping HTTP status codes to their reason phrases
-CODES = {
-    404: 'Not Found',
-    200: 'OK',
-    405: 'Method Not Allowed',
-    301: 'Moved Permanently',
-    400: 'Bad Request'
-}
-
-def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind(("localhost", 8080)) 
-    server_socket.listen(10)
-    
-    print("Server started on port 8080")
-    
-    while True:
-        client_conn, client_addr = server_socket.accept()
-        handle_request(client_conn)
-
-def handle_request(connection):
-    request_data = connection.recv(1024).decode().strip()
-    
-    if not request_data:
-        connection.close()
-        return
-    
-    request_method, request_path, _ = parse_request(request_data)
-    
-    if request_method.upper() != 'GET':
-        send_response(connection, 405)
-        return
-    
-    resolved_path = get_path(request_path)
-    
-    # Redirect to directory with a trailing slash if needed
-    if os.path.isdir(resolved_path) and not request_path.endswith('/'):
-        redirect(connection, request_path)
-        return
-    
-    # Send a 404 error if the file does not exist
-    if not os.path.isfile(resolved_path):
-        send_response(connection, 404)
-        return
-
-    with open(resolved_path, 'rb') as file_content:
-        content_data = file_content.read()
-        send_response(connection, 200, content_data, os.path.splitext(resolved_path)[1])
-
-    connection.close()
-
-def send_response(connection, status_code, content_data=None, file_extension='.html'):
-    # Generate error pages for non-200 status codes
-    if status_code != 200:
-        content_data = f"<html><body><h1>{status_code} {CODES[status_code]}</h1></body></html>".encode()
-    
-    # Prepare the HTTP headers for the response
-    headers = {
-        "Content-Type": MIME_TYPES.get(file_extension, 'text/plain'),
-        "Content-Length": str(len(content_data)),
-        "Connection": "close"
+    # HTTP Status Codes and their corresponding messages
+    CODES = {
+        200: 'OK',
+        301: 'Moved Permanently',
+        400: 'Bad Request',
+        404: 'Not Found',
+        405: 'Method Not Allowed'
     }
-    
-    # Construct the HTTP response and send it to the client
-    response = f"HTTP/1.1 {status_code} {CODES[status_code]}\r\n"
-    headers_str = ''.join([f"{header_name}: {header_value}\r\n" for header_name, header_value in headers.items()])
-    connection.sendall(f"{response}{headers_str}\r\n".encode() + content_data)
 
-def redirect(connection, path):
-    headers = {
-        "Location": path + '/'
+    # Mapping of file extensions to MIME types
+    MIME_TYPES = {
+        '.html': 'text/html',
+        '.css': 'text/css'
     }
-    response = f"HTTP/1.1 301 {CODES[301]}\r\n"
-    headers_str = ''.join([f"{header_name}: {header_value}\r\n" for header_name, header_value in headers.items()])
-    connection.sendall(f"{response}{headers_str}\r\n".encode())
 
-def get_path(path):
-    # Normalize the path to prevent directory traversal attacks
-    normalized_path = os.path.normpath(ROOT_DIRECTORY + path)
-    
-    # Serve the index.html file if the request is for a directory
-    if os.path.isdir(normalized_path) and path.endswith('/'):
-        return os.path.join(normalized_path, 'index.html')
+    def handle(self):
+        """Handle incoming client requests."""
+        self.data = self.request.recv(1024).strip()
+        if self.data:
+            req_method, req_path, _ = self.parse_request(self.data)
+            response = self.build_response(req_method, req_path)
+            self.request.sendall(response)
 
-    return normalized_path
+    def build_response(self, method, path):
+        """Build the response based on request method and path."""
+        if method.upper() != 'GET':
+            return self.construct_error(405)
 
-def parse_request(data):
-    request_lines = data.splitlines()
-    
-    # Extract the method, path, and protocol from the request line
-    method, path, protocol = request_lines[0].split(' ')
-    
-    # Extract the headers from the rest of the request
-    headers = {}
-    for line in request_lines[1:]:
-        if ':' in line:
-            header_name, header_value = line.split(': ', 1)
-            headers[header_name] = header_value
-            
-    return method, path, headers
+        file_path = self.get_path(path)
+
+        if os.path.isdir(file_path) and not path.endswith('/'):
+            return self.redirect(path)
+        elif not os.path.isfile(file_path):
+            return self.construct_error(404)
+
+        with open(file_path, 'rb') as file:
+            content = file.read()
+        return self.construct_response(200, file_path, content)
+
+    def construct_response(self, code, file_path, content):
+        """Construct a response given a status code, file path, and content."""
+        mime_type = self.MIME_TYPES.get(os.path.splitext(file_path)[1], 'text/plain')
+        headers = {
+            "Content-Type": mime_type,
+            "Content-Length": str(len(content)),
+            "Connection": "close"
+        }
+
+        response_line = f"HTTP/1.1 {code} {self.CODES[code]}\r\n"
+        headers_str = ''.join([f"{header_name}: {header_value}\r\n" for header_name, header_value in headers.items()])
+        
+        return f"{response_line}{headers_str}\r\n".encode() + content
+
+    def construct_error(self, code):
+        """Construct an error response."""
+        content = f"<html><body><h1>{code} {self.CODES[code]}</h1></body></html>".encode()
+        return self.construct_response(code, '.html', content)
+
+    def redirect(self, path):
+        """Construct a redirection response."""
+        headers = {
+            "Location": path + '/'
+        }
+        response_line = f"HTTP/1.1 301 {self.CODES[301]}\r\n"
+        headers_str = ''.join([f"{header_name}: {header_value}\r\n" for header_name, header_value in headers.items()])
+        return f"{response_line}{headers_str}\r\n".encode()
+
+    def get_path(self, path):
+        """Normalize the path and get the corresponding file path."""
+        normalized_path = os.path.normpath('www' + path)
+        if os.path.isdir(normalized_path) and path.endswith('/'):
+            return os.path.join(normalized_path, 'index.html')
+        return normalized_path
+
+    def parse_request(self, data):
+        """Parse the incoming request and extract method, path, and headers."""
+        lines = data.decode().splitlines()
+        method, path, _ = lines[0].split(' ')
+        headers = {line.split(": ")[0]: line.split(": ")[1] for line in lines[1:] if ':' in line}
+        return method, path, headers
 
 if __name__ == "__main__":
-    main()
+    HOST, PORT = "localhost", 8080
+
+    socketserver.TCPServer.allow_reuse_address = True
+    # Create the server, binding to localhost on port 8080
+    server = socketserver.TCPServer((HOST, PORT), MyWebServer)
+
+    # Activate the server; this will keep running until you
+    # interrupt the program with Ctrl-C
+    server.serve_forever()
