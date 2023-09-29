@@ -97,7 +97,13 @@ class MyWebServer(socketserver.BaseRequestHandler):
 
     def get_path(self, path):
         """Normalize the path and get the corresponding file path."""
-        normalized_path = os.path.normpath('www' + path)
+        root_dir = os.path.abspath('www') # Get the absolute path of root
+        normalized_path = os.path.abspath(os.path.join('www', path.lstrip("/"))) # Get the absolute path of the requested file
+        
+        # Check if the normalized path is still within the root directory
+        if not normalized_path.startswith(root_dir):
+            return "invalid_path" # Or any other mechanism to indicate an invalid path
+
         if os.path.isdir(normalized_path) and path.endswith('/'):
             return os.path.join(normalized_path, 'index.html')
         return normalized_path
