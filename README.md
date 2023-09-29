@@ -26,6 +26,6 @@ compatible) http://docs.python.org/2/library/socketserver.html
 
 References
 ========================
-https://www.w3.org/Protocols/
+https://www.w3.org/Protocols
 https://docs.python.org/3/library/socketserver.html
 https://docs.python.org/3/library/os.path.html
